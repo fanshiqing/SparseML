@@ -14,14 +14,14 @@ object LogisticRegression {
       val hdfsIndex2global = new Int2IntOpenHashMap()
       var index = 0
 
-      input.map { point =>
-        point._2 match {
-          case x: CompressedSparseMatrix =>
-            println("x.length" + x.mappings.length)
-          case _ =>
-            throw new IllegalArgumentException(s"dot doesn't support ${input.getClass}.")
-        }
-      }.count
+//      input.map { point =>
+//        point._2 match {
+//          case x: CompressedSparseMatrix =>
+//            println("x.length: " + x.mappings.length)
+//          case _ =>
+//            throw new IllegalArgumentException(s"dot doesn't support ${input.getClass}.")
+//        }
+//      }.count
 
       val global2hdfsIndex = input.map { point =>
         point._2 match {
@@ -30,7 +30,7 @@ object LogisticRegression {
           case _ =>
             throw new IllegalArgumentException(s"dot doesn't support ${input.getClass}.")
         }
-      }.collect().flatMap(t => t).distinct
+      }.flatMap(t => t).distinct.collect()
 
       global2hdfsIndex.foreach{value =>
         hdfsIndex2global.put(value, index)
@@ -59,10 +59,6 @@ object LogisticRegression {
   def train2(input: RDD[(Double, Vector)],
              optimizer: Optimizer
             ): (Array[Int], Array[Double]) = {
-
-    var hdfsIndex2global = new Int2IntOpenHashMap()
-    var index = 0
-
     val global2hdfsIndex = input.map { point =>
       point._2 match {
         case x: SparseVector =>
@@ -71,12 +67,9 @@ object LogisticRegression {
         case _ =>
           throw new IllegalArgumentException(s"dot doesn't support ${input.getClass}.")
       }
-    }.collect().flatMap(t => t).distinct
+    }.flatMap(t => t).distinct().collect()
 
-    global2hdfsIndex.foreach{value =>
-      hdfsIndex2global.put(value, index)
-      index += 1
-    }
+    val hdfsIndex2global = new Int2IntOpenHashMap(global2hdfsIndex, (0 until global2hdfsIndex.length).toArray, 1.0.toFloat)
 
     val bcHdfsIndex2global = input.context.broadcast(hdfsIndex2global)
 
