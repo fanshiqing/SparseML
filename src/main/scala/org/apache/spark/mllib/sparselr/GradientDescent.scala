@@ -175,7 +175,7 @@ object GradientDescent extends Logging {
           val gradientPerPartition = new HashedSparseVector()
           var size = 0
           points.foreach { point =>
-            loss += gradient.compute(point._2, point. _1, bcWeights.value, gradientPerPartition)
+            loss += gradient.compute(point._2, point._1, bcWeights.value, gradientPerPartition)
             size += 1
           }
           Iterator((gradientPerPartition, loss, size))

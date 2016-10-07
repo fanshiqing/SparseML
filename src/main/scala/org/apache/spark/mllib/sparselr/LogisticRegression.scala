@@ -6,6 +6,8 @@ import org.apache.spark.SparkEnv
 import org.apache.spark.rdd.RDD
 import org.apache.spark.broadcast.Broadcast
 
+import scala.collection.Map
+
 object LogisticRegression {
     def train(input: RDD[(Array[Double], Matrix)],
               optimizer: Optimizer
@@ -67,10 +69,9 @@ object LogisticRegression {
         case _ =>
           throw new IllegalArgumentException(s"dot doesn't support ${input.getClass}.")
       }
-    }.flatMap(t => t).distinct().collect()
+    }.flatMap(t => t).distinct().cache()
 
-    val hdfsIndex2global = new Int2IntOpenHashMap(global2hdfsIndex, (0 until global2hdfsIndex.length).toArray, 1.0.toFloat)
-
+    val hdfsIndex2global : Map[Int, Long] = global2hdfsIndex.zipWithIndex().collectAsMap()
     val bcHdfsIndex2global = input.context.broadcast(hdfsIndex2global)
 
     val examples = input.map(hdfs2globalMapping(bcHdfsIndex2global)).cache()
@@ -80,11 +81,11 @@ object LogisticRegression {
 
     SparkEnv.get.blockManager.removeBroadcast(bcHdfsIndex2global.id, true)
 
-    val weights = Vectors.dense(new Array[Double](global2hdfsIndex.length))
+    val weights = Vectors.dense(new Array[Double](hdfsIndex2global.size))
 
     val newWeights = optimizer.optimize(examples, weights)
 
-    ((global2hdfsIndex, newWeights.toArray))
+    ((global2hdfsIndex.collect(), newWeights.toArray))
   }
 
   //globalId to localId for mappings in Matrix
@@ -104,17 +105,17 @@ object LogisticRegression {
       partition
     }
 
-  def hdfs2globalMapping(bchdfsIndex2global: Broadcast[Int2IntOpenHashMap])
+  def hdfs2globalMapping(bchdfsIndex2global: Broadcast[Map[Int, Long]])
                         (point: (Double, Vector)): ((Double, Vector)) = {
     val hdfsIndex2global = bchdfsIndex2global.value
 
     point._2 match {
       case x: SparseVector =>
         for (i <- 0 until x.indices.length) {
-          x.indices(i) = hdfsIndex2global.get(x.indices(i))
+          x.indices(i) = hdfsIndex2global.get(x.indices(i)).get.toInt
         }
         for (i <- 0 until x.binaryIndices.length) {
-          x.binaryIndices(i) = hdfsIndex2global.get(x.binaryIndices(i))
+          x.binaryIndices(i) = hdfsIndex2global.get(x.binaryIndices(i)).get.toInt
         }
       case _ =>
         throw new IllegalArgumentException(s"dot doesn't support ${point.getClass}.")
