@@ -58,6 +58,71 @@ object LogisticRegression {
       ((global2hdfsIndex, newWeights.toArray))
     }
 
+  /**
+    * Default option.
+    *
+    * @param input native featureId array RDD
+    * @return A map from distinct featureId which appeared in the training dataset to global compressed new indices
+    */
+  def _getGlobalIndices0(input: RDD[Array[Int]]) : Map[Int, Int] = {
+    input.flatMap(t => t).distinct().collect().zipWithIndex.toMap
+  }
+
+  /**
+    * Directly collect the featureIds in the RDD to driver
+    */
+  def _getGlobalIndices1(input: RDD[Array[Int]]) : Map[Int, Int] = {
+    input.collect().flatMap(t => t).distinct.zipWithIndex.toMap
+  }
+
+  /**
+    * Use ArrayBuffer to cache the intermediate indices
+    */
+  def _getGlobalIndices2(input: RDD[Array[Int]]) : Map[Int, Int] = {
+    val global2hdfsIndex = new scala.collection.mutable.ArrayBuffer[Int]()
+    input.mapPartitions { iter =>
+      val buffer = new collection.mutable.ArrayBuffer[Int]()
+      while (iter.hasNext) {
+        buffer.appendAll(iter.next())
+      }
+      Iterator(buffer.toArray.distinct)
+    }.collect().foreach { indices =>
+      global2hdfsIndex.appendAll(indices)
+    }
+    global2hdfsIndex.toArray.distinct.zipWithIndex.toMap
+  }
+
+  /**
+    * Use HashSet to cache the intermediate indices.
+    *
+    * Theoretically this approach has the same time complexity with the approach above which
+    * takes ArrayBuffer to cache the intermediate indices while with less memory overhead.
+    */
+  def _getGlobalIndices3(input: RDD[Array[Int]]) : Map[Int, Int] = {
+    val global2hdfsIndex = new collection.mutable.HashSet[Int]()
+    input.mapPartitions { iter =>
+      val buffer = new collection.mutable.HashSet[Int]()
+      while (iter.hasNext) {
+        buffer ++= iter.next()
+      }
+      Iterator(buffer.toArray)
+    }.collect().foreach { indices =>
+      global2hdfsIndex ++= indices
+    }
+    global2hdfsIndex.toArray.zipWithIndex.toMap
+  }
+
+  /**
+    * TreeAggregation with default depth to prevent returning all partial results to the driver where
+    * a single pass reduce would take place as the classic aggregate does.
+    */
+  def _getGlobalIndices4(input: RDD[Array[Int]]) : Map[Int, Int] = {
+    input.treeAggregate(Array.empty[Int])(
+      (set, v) => set.union(v),
+      (set1, set2) => set1.union(set2).distinct,
+      2).zipWithIndex.toMap
+  }
+
   def train2(input: RDD[(Double, Vector)],
              optimizer: Optimizer
             ): (Array[Int], Array[Double]) = {
@@ -71,6 +136,9 @@ object LogisticRegression {
       }
     }.flatMap(t => t).distinct().cache()
 
+    // To get a Map of old sparse featureIds to new compressed featureIds for the memory savings,
+    // there are many other optional approaches listed as above, i.e., _getGlobalIndices0/1/2/3/4.
+    // Kindly choose the approach that best suits your applications' specific dataset.
     val hdfsIndex2global : Map[Int, Long] = global2hdfsIndex.zipWithIndex().collectAsMap()
     val bcHdfsIndex2global = input.context.broadcast(hdfsIndex2global)
 
